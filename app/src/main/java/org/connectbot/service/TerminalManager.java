@@ -660,7 +660,27 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 		final Thread t = new Thread() {
 			@Override
 			public void run() {
-				disconnectAll(false, true);
+				// Instead of disconnecting all connections, add them to the reconnect queue
+				synchronized (bridges) {
+					for (TerminalBridge bridge : bridges) {
+						if (bridge.isUsingNetwork()) {
+							// Add to pending reconnect before disconnecting
+							synchronized (mPendingReconnect) {
+								mPendingReconnect.add(new WeakReference<>(bridge));
+							}
+							// Mark bridge as needing reconnection but don't actually disconnect it
+							// This preserves the bridge in the bridges list so it can be reconnected later
+							if (bridge.host.getStayConnected()) {
+								// Just close the transport without removing the bridge from the list
+								if (bridge.transport != null && bridge.transport.isConnected()) {
+									bridge.transport.close();
+								}
+								// Mark as disconnected but keep in bridges list
+								bridge.setDisconnected(true);
+							}
+						}
+					}
+				}
 			}
 		};
 		t.setName("Disconnector");
@@ -675,6 +695,20 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 			@Override
 			public void run() {
 				reconnectPending();
+				// Also reconnect all disconnected hosts that had stay-connected enabled
+				synchronized (disconnected) {
+					for (HostBean host : new ArrayList<>(disconnected)) {
+						TerminalBridge bridge = getConnectedBridge(host);
+						if (bridge == null && host.getStayConnected()) {
+							// Create a new bridge and start connection
+							try {
+								openConnection(host);
+							} catch (IllegalArgumentException e) {
+								Log.d(TAG, "Could not reconnect to " + host.getNickname() + ", connection already exists");
+							}
+						}
+					}
+				}
 			}
 		};
 		t.setName("Reconnector");
@@ -709,6 +743,8 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 				if (bridge == null) {
 					continue;
 				}
+				// Reset disconnected flag and start reconnection
+				bridge.setDisconnected(false);
 				bridge.startConnection();
 			}
 			mPendingReconnect.clear();

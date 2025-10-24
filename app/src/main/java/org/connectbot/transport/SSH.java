@@ -489,6 +489,14 @@ public class SSH extends AbsTransport implements ConnectionMonitor, InteractiveC
 				t = t.getCause();
 			} while (t != null);
 
+			// Check if this is a network-related error that might be temporary
+			String message = e.getMessage();
+			if (message != null && (message.contains("ENETUNREACH") || message.contains("Network is unreachable") ||
+					message.contains("Connection timed out") || message.contains("connect failed"))) {
+				// Add to reconnect queue before disconnecting if it's a network issue
+				manager.requestReconnect(bridge);
+			}
+
 			close();
 			onDisconnect();
 			return;

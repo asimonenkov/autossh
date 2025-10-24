@@ -477,6 +477,7 @@ public class TerminalBridge implements VDUDisplay {
 				final String line = manager.res.getString(R.string.alert_disconnect_msg);
 				((vt320) buffer).putString("\r\n" + line + "\r\n");
 			}
+			// Always request reconnect for stay-connected hosts, regardless of network status
 			if (host.getStayConnected()) {
 				manager.requestReconnect(this);
 				return;
@@ -987,6 +988,14 @@ public class TerminalBridge implements VDUDisplay {
 	 */
 	public boolean isDisconnected() {
 		return disconnected;
+	}
+	
+	/**
+	 * Set the disconnected state of this bridge.
+	 * @param disconnected whether the bridge is disconnected
+	 */
+	public void setDisconnected(boolean disconnected) {
+		this.disconnected = disconnected;
 	}
 
 	/* (non-Javadoc)
