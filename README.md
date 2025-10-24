@@ -34,6 +34,32 @@ you can invoke the Gradle wrapper to build:
 ./gradlew build
 ```
 
+### Building Release APK
+
+To build a release APK, you can use the following commands for different flavors:
+
+For OSS flavor:
+```sh
+./gradlew assembleOssRelease
+```
+
+For Google flavor:
+```sh
+./gradlew assembleGoogleRelease
+```
+
+If you want to build both flavors:
+```sh
+./gradlew assembleRelease
+```
+
+Note: For a signed release APK, you'll need to configure signing properties in your `gradle.properties` file with the following:
+```
+keystoreFile=path/to/your/keystore.jks
+keystorePassword=your_keystore_password
+keystoreAlias=your_key_alias
+```
+
 ### Reproducing Continuous Integration (CI) builds locally
 
 To run the Jenkins CI pipeline locally, you can use
