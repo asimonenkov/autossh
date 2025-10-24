@@ -676,4 +676,8 @@
 	<string name="notification_requirement_explanation">Notification permission is required to display running sessions in the background</string>
 	<string name="continue_anyway">Continue without</string>
 	<string name="allow">Allow</string>
+	
+	<!-- Setting for whether the host should be automatically connected when the phone boots -->
+	<string name="hostpref_auto_connect_title">Auto-connect on boot</string>
+	<string name="hostpref_auto_connect_summary">Connect to this host automatically when the phone starts</string>
 </resources>

@@ -72,8 +72,14 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 	private final ArrayList<TerminalBridge> bridges = new ArrayList<>();
 	public Map<HostBean, WeakReference<TerminalBridge>> mHostBridgeMap = new HashMap<>();
 	public Map<String, WeakReference<TerminalBridge>> mNicknameBridgeMap = new HashMap<>();
+	
+	private static TerminalManager instance;
 
 	public TerminalBridge defaultBridge = null;
+	
+	public static TerminalManager getInstance() {
+	return instance;
+	}
 
 	public final List<HostBean> disconnected = new ArrayList<>();
 
@@ -118,7 +124,10 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 
 	@Override
 	public void onCreate() {
-		Log.i(TAG, "Starting service");
+	Log.i(TAG, "Starting service");
+		
+		// Set the static instance
+		instance = this;
 
 		prefs = PreferenceManager.getDefaultSharedPreferences(this);
 		prefs.registerOnSharedPreferenceChangeListener(this);
@@ -212,7 +221,7 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 	/**
 	 * Open a new SSH session using the given parameters.
 	 */
-	private TerminalBridge openConnection(HostBean host) throws IllegalArgumentException {
+	public TerminalBridge openConnection(HostBean host) throws IllegalArgumentException {
 		// throw exception if terminal already open
 		if (getConnectedBridge(host) != null) {
 			throw new IllegalArgumentException("Connection already open for that nickname");

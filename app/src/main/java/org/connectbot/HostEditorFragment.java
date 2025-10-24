@@ -125,6 +125,7 @@ public class HostEditorFragment extends Fragment {
 	private CheckableMenuItem mStartShellSwitch;
 	private CheckableMenuItem mStayConnectedSwitch;
 	private CheckableMenuItem mCloseOnDisconnectSwitch;
+	private CheckableMenuItem mAutoConnectSwitch;
 	private EditText mPostLoginAutomationField;
 	private HostTextFieldWatcher mFontSizeTextChangeListener;
 
@@ -469,6 +470,16 @@ public class HostEditorFragment extends Fragment {
 			@Override
 			public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
 				mHost.setQuickDisconnect(isChecked);
+				handleHostChange();
+			}
+		});
+
+		mAutoConnectSwitch = view.findViewById(R.id.auto_connect_item);
+	mAutoConnectSwitch.setChecked(mHost.getAutoConnect());
+		mAutoConnectSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+			@Override
+			public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+				mHost.setAutoConnect(isChecked);
 				handleHostChange();
 			}
 		});
