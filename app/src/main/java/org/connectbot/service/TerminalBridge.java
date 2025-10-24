@@ -399,11 +399,6 @@ public class TerminalBridge implements VDUDisplay {
 	public void onConnected() {
 		disconnected = false;
 
-		((vt320) buffer).reset();
-
-		// We no longer need our local output.
-		localOutput.clear();
-
 		// previously tried vt100 and xterm for emulation modes
 		// "screen" works the best for color and escape codes
 		((vt320) buffer).setAnswerBack(emulation);
