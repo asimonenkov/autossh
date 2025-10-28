@@ -119,6 +119,20 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 	private boolean savingKeys;
 
 	protected final List<WeakReference<TerminalBridge>> mPendingReconnect = new ArrayList<>();
+	
+	// Структура для отслеживания попыток переподключения
+	public static class ReconnectionInfo {
+		public final TerminalBridge bridge;
+		public int attempts = 0;
+		public long lastAttemptTime = 0;
+		
+		public ReconnectionInfo(TerminalBridge bridge) {
+			this.bridge = bridge;
+		}
+	}
+	
+	// Список для отслеживания попыток переподключения с задержками
+	public final List<ReconnectionInfo> mReconnectionQueue = new ArrayList<>();
 
 	public boolean hardKeyboardHidden;
 
@@ -176,7 +190,12 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 	@Override
 	public void onDestroy() {
 		Log.i(TAG, "Destroying service");
-
+		
+		// Прерываем поток переподключения
+		if (reconnectSchedulerThread != null && isReconnectSchedulerRunning) {
+			reconnectSchedulerThread.interrupt();
+		}
+		
 		disconnectAll(true, false);
 
 		hostdb = null;
@@ -666,7 +685,7 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 	 * we'll be getting a different connection any time soon.
 	 */
 	public void onConnectivityLost() {
-		final Thread t = new Thread() {
+	final Thread t = new Thread() {
 			@Override
 			public void run() {
 				// Instead of disconnecting all connections, add them to the reconnect queue
@@ -674,8 +693,19 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 					for (TerminalBridge bridge : bridges) {
 						if (bridge.isUsingNetwork()) {
 							// Add to pending reconnect before disconnecting
-							synchronized (mPendingReconnect) {
-								mPendingReconnect.add(new WeakReference<>(bridge));
+							synchronized (mReconnectionQueue) {
+								// Проверяем, не находится ли уже мост в очереди переподключения
+								boolean alreadyInQueue = false;
+								for (ReconnectionInfo info : mReconnectionQueue) {
+									if (info.bridge == bridge) {
+										alreadyInQueue = true;
+										break;
+									}
+								}
+								
+								if (!alreadyInQueue) {
+									mReconnectionQueue.add(new ReconnectionInfo(bridge));
+								}
 							}
 							// Mark bridge as needing reconnection but don't actually disconnect it
 							// This preserves the bridge in the bridges list so it can be reconnected later
@@ -703,7 +733,9 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 		final Thread t = new Thread() {
 			@Override
 			public void run() {
-				reconnectPending();
+				// Запускаем планировщик переподключения, чтобы начать попытки
+				scheduleReconnect();
+				
 				// Also reconnect all disconnected hosts that had stay-connected enabled
 				synchronized (disconnected) {
 					for (HostBean host : new ArrayList<>(disconnected)) {
@@ -711,7 +743,21 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 						if (bridge == null && host.getStayConnected()) {
 							// Create a new bridge and start connection
 							try {
-								openConnection(host);
+								TerminalBridge newBridge = openConnection(host);
+								// Добавляем новый мост в очередь переподключения на случай разрыва
+								synchronized (mReconnectionQueue) {
+									boolean alreadyInQueue = false;
+									for (ReconnectionInfo info : mReconnectionQueue) {
+										if (info.bridge == newBridge) {
+											alreadyInQueue = true;
+											break;
+										}
+									}
+									
+									if (!alreadyInQueue) {
+										mReconnectionQueue.add(new ReconnectionInfo(newBridge));
+									}
+								}
 							} catch (IllegalArgumentException e) {
 								Log.d(TAG, "Could not reconnect to " + host.getNickname() + ", connection already exists");
 							}
@@ -732,21 +778,128 @@ public class TerminalManager extends Service implements BridgeDisconnectedListen
 	 * @param bridge the TerminalBridge to reconnect when possible
 	 */
 	public void requestReconnect(TerminalBridge bridge) {
-		synchronized (mPendingReconnect) {
-			mPendingReconnect.add(new WeakReference<>(bridge));
-			if (!bridge.isUsingNetwork() ||
-					connectivityManager.isConnected()) {
-				reconnectPending();
+		synchronized (mReconnectionQueue) {
+			// Проверяем, не находится ли уже мост в очереди переподключения
+			boolean alreadyInQueue = false;
+			for (ReconnectionInfo info : mReconnectionQueue) {
+				if (info.bridge == bridge) {
+					alreadyInQueue = true;
+					break;
+				}
+			}
+			
+			if (!alreadyInQueue) {
+				mReconnectionQueue.add(new ReconnectionInfo(bridge));
+			}
+			
+			if (!bridge.isUsingNetwork() || connectivityManager.isConnected()) {
+				// Запускаем обработчик переподключения с задержками
+				scheduleReconnect();
 			}
 		}
 	}
 
 	/**
+	 * Calculate the delay for reconnection based on number of attempts
+	 * First 5 attempts: 2 seconds each
+	 * Next 5 attempts: 5 seconds each
+	 * After that: 30 seconds each
+	 */
+	private long getReconnectDelay(int attempts) {
+		if (attempts <= 5) {
+			return 2000; // 2 seconds
+		} else if (attempts <= 10) {
+			return 5000; // 5 seconds
+		} else {
+			return 30000; // 30 seconds
+		}
+	}
+	
+	// Поток для обработки переподключений с задержками
+	private Thread reconnectSchedulerThread = null;
+	private boolean isReconnectSchedulerRunning = false;
+	
+	/**
+	 * Schedule reconnection with appropriate delays
+	 */
+	private void scheduleReconnect() {
+		synchronized (mReconnectionQueue) {
+			// Проверяем, запущен ли уже планировщик
+			if (isReconnectSchedulerRunning && reconnectSchedulerThread != null && reconnectSchedulerThread.isAlive()) {
+				return; // Планировщик уже работает
+			}
+			
+			// Создаем новый поток для обработки переподключения с задержками
+			reconnectSchedulerThread = new Thread(new Runnable() {
+				@Override
+				public void run() {
+					isReconnectSchedulerRunning = true;
+					
+					while (!mReconnectionQueue.isEmpty()) {
+						synchronized (mReconnectionQueue) {
+							long currentTime = System.currentTimeMillis();
+							List<ReconnectionInfo> completed = new ArrayList<>();
+							
+							for (ReconnectionInfo info : mReconnectionQueue) {
+								// Проверяем, не был ли мост уничтожен
+								if (info.bridge == null) {
+									completed.add(info);
+									continue;
+								}
+								
+								long delay = getReconnectDelay(info.attempts);
+								long timeSinceLastAttempt = currentTime - info.lastAttemptTime;
+								
+								// Если прошло достаточно времени для следующей попытки
+								if (timeSinceLastAttempt >= delay) {
+									// Проверяем, все ли еще соединение разорвано
+									if (info.bridge.isDisconnected()) {
+										// Увеличиваем счетчик попыток
+										info.attempts++;
+										info.lastAttemptTime = currentTime;
+										
+										// Выполняем попытку переподключения
+										info.bridge.setDisconnected(false);
+										info.bridge.startConnection();
+										
+										Log.d(TAG, "Reconnection attempt #" + info.attempts + " for " + info.bridge.host.getNickname());
+									} else {
+										// Если мост больше не отключен, удаляем из очереди
+										completed.add(info);
+									}
+								}
+							}
+							
+							// Удаляем завершенные попытки
+							mReconnectionQueue.removeAll(completed);
+						}
+						
+						// Повторяем через 100 мс, чтобы проверить, когда следующая задержка истечет
+						try {
+							Thread.sleep(10);
+						} catch (InterruptedException e) {
+							// Возвращаем прерывание потока
+							Thread.currentThread().interrupt();
+							break;
+						}
+					}
+					
+					isReconnectSchedulerRunning = false;
+				}
+			});
+			reconnectSchedulerThread.setName("ReconnectScheduler");
+			reconnectSchedulerThread.start();
+		}
+	}
+	
+	/**
 	 * Reconnect all bridges that were pending a reconnect when connectivity
 	 * was lost.
 	 */
 	private void reconnectPending() {
-		synchronized (mPendingReconnect) {
+		// This method is no longer used as we have the new delay-based reconnection
+		// Keep it for backward compatibility with any existing calls
+	synchronized (mPendingReconnect) {
 			for (WeakReference<TerminalBridge> ref : mPendingReconnect) {
 				TerminalBridge bridge = ref.get();
 				if (bridge == null) {
